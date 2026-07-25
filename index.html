@@ -273,7 +273,7 @@
    CONFIGURAZIONE — personalizza qui nome, testi e contatto.
    ========================================================================= */
 const CONFIG = {
-  artistName: "Nome Artista",
+  artistName: "Marta Moretto",
   tagline: "Disegni, quadri e magliette dipinte a mano, uno alla volta.",
   email: "tuonome@esempio.it",
   bio: [
@@ -319,6 +319,8 @@ let imgMode = "url"; // "url" | "upload"
 let pendingImageData = "";
 let session = null;
 let uploading = false;
+let site = JSON.parse(JSON.stringify(CONFIG)); // contenuti homepage/storia, sovrascritti dal database
+let adminTab = "products"; // "products" | "content"
 
 function parseHash(){
   const h = location.hash.replace("#","") || "home";
@@ -354,6 +356,24 @@ async function updateProductRow(id, p){
 async function deleteProductRow(id){
   const {error} = await supabaseClient.from("products").delete().eq("id", id);
   return !error;
+}
+
+async function loadSiteContent(){
+  const {data, error} = await supabaseClient.from("site_content").select("data").eq("id", 1).single();
+  if(!error && data && data.data && Array.isArray(data.data.bio) && data.data.bio.length === 3){
+    site = data.data;
+  } else {
+    site = JSON.parse(JSON.stringify(CONFIG));
+  }
+}
+async function saveSiteContent(newSite){
+  const {error} = await supabaseClient.from("site_content").update({data:newSite}).eq("id", 1);
+  if(error){
+    const {error:err2} = await supabaseClient.from("site_content").insert({id:1, data:newSite});
+    if(err2){ console.error(err2); return false; }
+  }
+  site = newSite;
+  return true;
 }
 
 /* =========================================================================
@@ -416,13 +436,13 @@ function Header(){
   return `
   <header class="site">
     <div class="site-inner">
-      <a href="#home" class="logo"><span class="logo-mark"></span>${esc(CONFIG.artistName)}</a>
+      <a href="#home" class="logo"><span class="logo-mark"></span>${esc(site.artistName)}</a>
       <button class="burger" onclick="document.querySelector('.site-nav').classList.toggle('open')" aria-label="Apri menu">☰</button>
       <nav class="site-nav">
         <a href="#home" class="${active('home')}">Home</a>
         <a href="#shop" class="${active('shop')}">Negozio</a>
         <a href="#home">#storia</a>
-        <a href="#admin" class="${active('admin')}" style="opacity:.6;">Gestisci opere</a>
+        ${session ? `<a href="#admin" class="${active('admin')}" style="opacity:.6;">Gestisci contenuti</a>` : ""}
       </nav>
     </div>
   </header>`;
@@ -431,8 +451,8 @@ function Footer(){
   return `
   <footer class="site">
     <div class="wrap footer-inner">
-      <p>© ${new Date().getFullYear()} ${esc(CONFIG.artistName)} — tutte le opere sono originali.</p>
-      <a href="#admin">+ Aggiungi una nuova opera</a>
+      <p>© ${new Date().getFullYear()} ${esc(site.artistName)} — tutte le opere sono originali.</p>
+      ${session ? `<a href="#admin">Gestisci contenuti</a>` : `<a href="#admin" style="opacity:.35;">Area riservata</a>`}
     </div>
   </footer>`;
 }
@@ -463,7 +483,7 @@ function Home(){
       <div>
         <p class="eyebrow">Bottega dell'artista</p>
         <h1 class="display">Ogni pezzo è <em>unico</em>,<br>come chi lo porta a casa.</h1>
-        <p class="lede">${esc(CONFIG.tagline)}</p>
+        <p class="lede">${esc(site.tagline)}</p>
         <div class="hero-actions">
           <a href="#shop" class="btn">Scopri le opere →</a>
           <a href="#home" onclick="document.getElementById('storia').scrollIntoView({behavior:'smooth'});return false;" class="btn ghost">La mia storia</a>
@@ -480,7 +500,7 @@ function Home(){
         <h2 class="display">Niente riproduzioni. Solo mano, tempo e un'idea alla volta.</h2>
       </div>
       <div class="story-cols">
-        ${CONFIG.bio.map(b=>`
+        ${site.bio.map(b=>`
         <div class="story-block">
           <div class="pigment-label"><span class="pigment-dot" style="background:${b.pigment==='grafite'?'var(--grafite)':b.pigment==='cadmio'?'var(--cadmio)':'var(--ocra)'}"></span>${esc(b.pigment)}</div>
           <h3>${esc(b.title)}</h3>
@@ -563,7 +583,7 @@ function ProductView(){
   }
   const c = CATS[p.category];
   const subject = encodeURIComponent(`Richiesta info: ${p.title}`);
-  const body = encodeURIComponent(`Ciao ${CONFIG.artistName},\n\nsono interessato/a a "${p.title}" (${fmtPrice(p.price)}). È ancora disponibile?\n\nGrazie!`);
+  const body = encodeURIComponent(`Ciao ${site.artistName},\n\nsono interessato/a a "${p.title}" (${fmtPrice(p.price)}). È ancora disponibile?\n\nGrazie!`);
   return `
   <div class="wrap product-view">
     <a href="#shop/${p.category}" class="back-link">← Torna a ${c.plural}</a>
@@ -578,7 +598,7 @@ function ProductView(){
         </div>
         <p class="desc">${esc(p.desc || "")}</p>
         <div class="price-tag">${fmtPrice(p.price)}</div>
-        <a class="btn" href="mailto:${esc(CONFIG.email)}?subject=${subject}&body=${body}">Scrivimi per acquistarla</a>
+        <a class="btn" href="mailto:${esc(site.email)}?subject=${subject}&body=${body}">Scrivimi per acquistarla</a>
       </div>
     </div>
   </div>`;
@@ -613,13 +633,55 @@ function AdminView(){
   const editing = editingId ? products.find(p=>p.id===editingId) : null;
   return `
   <div class="wrap admin-view">
-    <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
       <div>
-        <p class="kicker">Pannello opere</p>
-        <h2 class="display" style="margin-bottom:34px;">${editing ? "Modifica opera" : "Aggiungi una nuova opera"}</h2>
+        <p class="kicker">Pannello di amministrazione</p>
+        <h2 class="display" style="margin-bottom:10px;">${adminTab==='content' ? "Testi del sito" : (editing ? "Modifica opera" : "Aggiungi una nuova opera")}</h2>
       </div>
       <button class="btn ghost small" id="logout-btn">Esci</button>
     </div>
+    <div style="display:flex; gap:10px; margin:16px 0 34px;">
+      <button type="button" class="swatch ${adminTab==='products'?'active':''}" id="tab-products">Opere</button>
+      <button type="button" class="swatch ${adminTab==='content'?'active':''}" id="tab-content">Testi del sito</button>
+    </div>
+    ${adminTab === 'content' ? AdminContent() : AdminProducts(editing)}
+  </div>`;
+}
+
+function AdminContent(){
+  return `
+  <div class="form-card" style="max-width:680px;">
+    <form id="content-form">
+      <div class="field">
+        <label for="c-name">Nome artista (logo e footer)</label>
+        <input id="c-name" type="text" value="${esc(site.artistName)}">
+      </div>
+      <div class="field">
+        <label for="c-tagline">Frase sotto il titolo, in homepage</label>
+        <textarea id="c-tagline">${esc(site.tagline)}</textarea>
+      </div>
+      <div class="field">
+        <label for="c-email">Email per le richieste d'acquisto</label>
+        <input id="c-email" type="text" value="${esc(site.email)}">
+      </div>
+      <p class="kicker" style="margin-top:26px;">Sezione "La mia storia"</p>
+      ${site.bio.map((b,i)=>`
+        <div class="field" style="margin-top:14px;">
+          <label for="c-bio-title-${i}">Titolo — pigmento ${esc(b.pigment)}</label>
+          <input id="c-bio-title-${i}" type="text" value="${esc(b.title)}">
+        </div>
+        <div class="field">
+          <label for="c-bio-text-${i}">Testo — pigmento ${esc(b.pigment)}</label>
+          <textarea id="c-bio-text-${i}">${esc(b.text)}</textarea>
+        </div>
+      `).join("")}
+      <button type="submit" class="btn" style="margin-top:10px;">Salva contenuti</button>
+    </form>
+  </div>`;
+}
+
+function AdminProducts(editing){
+  return `
     <div class="admin-grid">
       <div class="form-card">
         <form id="product-form">
@@ -686,8 +748,7 @@ function AdminView(){
             </div>`).join("") : `<p class="hint">Nessuna opera ancora: usa il modulo per aggiungere la prima.</p>`}
         </div>
       </div>
-    </div>
-  </div>`;
+    </div>`;
 }
 
 function renderImgInput(){
@@ -750,6 +811,14 @@ function attachLoginHandlers(){
 
 function attachAdminHandlers(){
   document.getElementById("logout-btn").addEventListener("click", logout);
+  document.getElementById("tab-products").addEventListener("click", ()=>{ adminTab="products"; render(); });
+  document.getElementById("tab-content").addEventListener("click", ()=>{ adminTab="content"; render(); });
+
+  if(adminTab === "content"){
+    attachContentHandlers();
+    return;
+  }
+
   document.getElementById("mode-url").addEventListener("click", ()=>{ imgMode="url"; render(); });
   document.getElementById("mode-upload").addEventListener("click", ()=>{ imgMode="upload"; render(); });
   renderImgInput();
@@ -810,6 +879,26 @@ function attachAdminHandlers(){
   });
 }
 
+function attachContentHandlers(){
+  document.getElementById("content-form").addEventListener("submit", async (e)=>{
+    e.preventDefault();
+    const newSite = {
+      artistName: document.getElementById("c-name").value.trim() || CONFIG.artistName,
+      tagline: document.getElementById("c-tagline").value.trim(),
+      email: document.getElementById("c-email").value.trim(),
+      bio: site.bio.map((b,i)=>({
+        pigment: b.pigment,
+        title: document.getElementById(`c-bio-title-${i}`).value.trim(),
+        text: document.getElementById(`c-bio-text-${i}`).value.trim()
+      }))
+    };
+    const ok = await saveSiteContent(newSite);
+    if(!ok){ showToast("Errore nel salvare i contenuti"); return; }
+    showToast("Contenuti del sito aggiornati");
+    render();
+  });
+}
+
 /* =========================================================================
    RENDER PRINCIPALE
    ========================================================================= */
@@ -843,7 +932,7 @@ function renderLoading(){
 (async function init(){
   renderLoading();
   await initAuth();
-  await loadProducts();
+  await Promise.all([loadProducts(), loadSiteContent()]);
   render();
 })();
 </script>
